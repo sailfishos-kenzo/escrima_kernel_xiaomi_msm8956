@@ -6985,7 +6985,7 @@ static void mem_cgroup_move_task(struct cgroup *cont,
 }
 #endif
 
-static int mem_cgroup_allow_attach(struct cgroup *cgrp,
+/* static int mem_cgroup_allow_attach(struct cgroup *cgrp,
 				 struct cgroup_taskset *tset)
 {
 	const struct cred *cred = current_cred(), *tcred;
@@ -7000,7 +7000,7 @@ static int mem_cgroup_allow_attach(struct cgroup *cgrp,
 	}
 
 	return 0;
-}
+} */
 
 /*
  * Cgroup retains root cgroups across [un]mount cycles making it necessary
