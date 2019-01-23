@@ -1,0 +1,152 @@
+--- drivers/android/binder.c
++++ drivers/android/binder.c
+@@ -47,98 +46,19 @@
+ #include <uapi/linux/android/binder.h>
+ #include "binder_trace.h"
+ 
+-/*
+- * Using a private context manager for each binder namespace is sufficient
+- * to isolate between namespaces, because in binder all IPC must be realized
+- * via hanldes obtained from the context manager.
+- *
+- * TODO: currently, most debugfs data is not tracked per binder namespaces.
+- * Except for "procs" which are properly virtualized, everything else is
+- * global, including stats, logs, and dead nodes.
+- */
+-struct binder_namespace {
+-	struct kref kref;
+-
+-	struct binder_node *context_mgr_node;
+-	kuid_t context_mgr_uid;
+-	int last_id;
+-
+-	struct hlist_head procs;
+-};
+-
+-static struct binder_namespace *create_binder_ns(void)
+-{
+-	struct binder_namespace *binder_ns;
+-
+-	binder_ns = kzalloc(sizeof(struct binder_namespace), GFP_KERNEL);
+-	if (binder_ns) {
+-		kref_init(&binder_ns->kref);
+-		binder_ns->context_mgr_uid = INVALID_UID;
+-		INIT_HLIST_HEAD(&binder_ns->procs);
+-	}
+-	return binder_ns;
+-}
+-
+-static void free_binder_ns(struct kref *kref)
+-{
+-	kfree(container_of(kref, struct binder_namespace, kref));
+-}
+-
+-static void get_binder_ns(struct binder_namespace *binder_ns)
+-{
+-	kref_get(&binder_ns->kref);
+-}
+-
+-static void put_binder_ns(struct binder_namespace *binder_ns)
+-{
+-	kref_put(&binder_ns->kref, free_binder_ns);
+-}
+-
+-/*
+- * Binder is an IPC mechanism, so tie its namespace to IPC_NS
+- * using the generic data pointer and per-ipc operations.
+- */
+-static struct binder_namespace *current_binder_ns(void)
+-{
+-	return ipc_access_generic(current->nsproxy->ipc_ns);
+-}
+-
+-int binder_init_ns(struct ipc_namespace *ipcns)
+-{
+-	struct binder_namespace *binder_ns;
+-	int ret = -ENOMEM;
+-
+-	binder_ns = create_binder_ns();
+-	if (binder_ns) {
+-		ipc_assign_generic(ipcns, binder_ns);
+-		ret = 0;
+-	}
+-	return ret;
+-}
+-
+-void binder_exit_ns(struct ipc_namespace *ipcns)
+-{
+-	struct binder_namespace *binder_ns;
+-
+-	binder_ns = ipc_access_generic(ipcns);
+-	if (binder_ns)
+-		put_binder_ns(binder_ns);
+-}
+-
+-struct peripc_operations binder_peripc_ops = {
+-	.init = binder_init_ns,
+-	.exit = binder_exit_ns,
+-};
+-
+ static DEFINE_RT_MUTEX(binder_main_lock);
+ static DEFINE_MUTEX(binder_deferred_lock);
+ static DEFINE_MUTEX(binder_mmap_lock);
+ 
++static HLIST_HEAD(binder_procs);
+ static HLIST_HEAD(binder_deferred_list);
+ static HLIST_HEAD(binder_dead_nodes);
+ 
+ static struct dentry *binder_debugfs_dir_entry_root;
+ static struct dentry *binder_debugfs_dir_entry_proc;
++static struct binder_node *binder_context_mgr_node;
++static kuid_t binder_context_mgr_uid = INVALID_UID;
++static int binder_last_id;
+ static struct workqueue_struct *binder_deferred_workqueue;
+ 
+ #define BINDER_DEBUG_ENTRY(name) \
+@@ -406,8 +326,6 @@
+ 	int ready_threads;
+ 	long default_priority;
+ 	struct dentry *debugfs_entry;
+-
+-	struct binder_namespace *binder_ns;
+ };
+ 
+ enum {
+@@ -2787,27 +2704,27 @@
+ 	ret = security_binder_set_context_mgr(proc->tsk);
+ 	if (ret < 0)
+ 		goto out;
+-	if (uid_valid(binder_ns->context_mgr_uid)) {
+-		if (!uid_eq(binder_ns->context_mgr_uid, curr_euid)) {
++	if (uid_valid(binder_context_mgr_uid)) {
++		if (!uid_eq(binder_context_mgr_uid, curr_euid)) {
+ 			pr_err("BINDER_SET_CONTEXT_MGR bad uid %d != %d\n",
+ 			       from_kuid(&init_user_ns, curr_euid),
+ 			       from_kuid(&init_user_ns,
+-					binder_ns->context_mgr_uid));
++					binder_context_mgr_uid));
+ 			ret = -EPERM;
+ 			goto out;
+ 		}
+ 	} else {
+-		binder_ns->context_mgr_uid = curr_euid;
++		binder_context_mgr_uid = curr_euid;
+ 	}
+-	binder_ns->context_mgr_node = binder_new_node(proc, 0, 0);
+-	if (binder_ns->context_mgr_node == NULL) {
++	binder_context_mgr_node = binder_new_node(proc, 0, 0);
++	if (binder_context_mgr_node == NULL) {
+ 		ret = -ENOMEM;
+ 		goto out;
+ 	}
+-	binder_ns->context_mgr_node->local_weak_refs++;
+-	binder_ns->context_mgr_node->local_strong_refs++;
+-	binder_ns->context_mgr_node->has_strong_ref = 1;
+-	binder_ns->context_mgr_node->has_weak_ref = 1;
++	binder_context_mgr_node->local_weak_refs++;
++	binder_context_mgr_node->local_strong_refs++;
++	binder_context_mgr_node->has_strong_ref = 1;
++	binder_context_mgr_node->has_weak_ref = 1;
+ out:
+ 	return ret;
+ }

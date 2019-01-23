@@ -1,0 +1,10 @@
+--- drivers/android/Kconfig
++++ drivers/android/Kconfig
+@@ -10,6 +10,7 @@
+ config ANDROID_BINDER_IPC
+ 	bool "Android Binder IPC Driver"
+ 	depends on MMU
++	select SYSVIPC
+ 	default n
+ 	---help---
+ 	  Binder is used in Android for both communication between processes,
